@@ -1,18 +1,22 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"os"
-	"bytes"
-	"io"
+	"regexp"
 	"strings"
 )
 
-var CRLF = []byte{'\r', '\n'}
+var (
+	CRLF             = []byte{'\r', '\n'}
+	EchoEndpointRegx = regexp.MustCompile(`\/echo\/(?P<str>.*)`)
+)
 
 // ReadUntilCRLF reads from the buffer until it finds a CRLF sequence.
-// It returns the string up to the CRLF sequence. 
+// It returns the string up to the CRLF sequence.
 func ReadUntilCRLF(b *bytes.Buffer) (string, error) {
 	// Search for the CRLF sequence in the unread portion of the buffer.
 	index := bytes.Index(b.Bytes(), CRLF)
@@ -44,8 +48,8 @@ func main() {
 
 	conn, err := l.Accept()
 	if err != nil {
-	 	fmt.Println("Error accepting connection: ", err.Error())
-	 	os.Exit(1)
+		fmt.Println("Error accepting connection: ", err.Error())
+		os.Exit(1)
 	}
 	defer conn.Close()
 
@@ -66,7 +70,7 @@ func main() {
 		}
 
 		reqData.Write(buffer[:n])
-		
+
 		// Read the 'Request Line'
 		rl, err := ReadUntilCRLF(&reqData)
 		if err == nil && len(rl) > 1 {
@@ -84,10 +88,12 @@ func main() {
 
 	reqTarget := reqLineTokens[1]
 	var resp []byte
-	if reqTarget != "/" {
-		resp = []byte("HTTP/1.1 404 Not Found\r\n\r\n")
-	} else {
+	if reqTarget == "/" {
 		resp = []byte("HTTP/1.1 200 OK\r\n\r\n")
+	} else if matches := EchoEndpointRegx.FindStringSubmatch(reqTarget); len(matches) > 0 {
+		resp = fmt.Appendf(nil, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(matches[1]), matches[1])
+	} else {
+		resp = []byte("HTTP/1.1 404 Not Found\r\n\r\n")
 	}
 
 	// Write the response back to client
