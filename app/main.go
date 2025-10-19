@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -154,8 +155,13 @@ func (c *ConnHandler) FileHandler(flags map[string]any, reqLine *RequestLine) {
 	// Open the file
 	file, err := os.Open(dir + "/" + filename)
 	if err != nil {
-		fmt.Println("Error opening the file: ", err.Error())
-		os.Exit(1)
+		if errors.Is(err, os.ErrNotExist) {
+			c.NotFoundHandler()
+			return
+		} else {
+			fmt.Println("Error opening the file: ", err.Error())
+			os.Exit(1)
+		}
 	}
 	defer file.Close()
 
