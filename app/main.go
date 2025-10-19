@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -11,34 +10,128 @@ import (
 )
 
 var (
-	CRLF             = []byte{'\r', '\n'}
+	CRLF             = "\r\n"
 	EchoEndpointRegx = regexp.MustCompile(`\/echo\/(?P<str>.*)`)
 )
 
-// ReadUntilCRLF reads from the buffer until it finds a CRLF sequence.
+// ReadUntilCRLF reads from the connection until it finds a CRLF sequence.
 // It returns the string up to the CRLF sequence.
-func ReadUntilCRLF(b *bytes.Buffer) (string, error) {
-	// Search for the CRLF sequence in the unread portion of the buffer.
-	index := bytes.Index(b.Bytes(), CRLF)
-	if index >= 0 { // Sequence found
-		// Read the data upto CRLF
-		lineBytes := b.Next(index)
-		return string(lineBytes), nil
+func ReadUntilCRLF(conn net.Conn) (string, error) {
+	var data []byte
+
+	for {
+		aByte := make([]byte, 1)
+		_, err := conn.Read(aByte)
+		if err == io.EOF {
+			// Connection closed by peer
+			return string(data), io.EOF
+		} else if err != nil {
+			fmt.Println("Error reading the request data: ", err)
+			return "", err
+		}
+
+		data = append(data, aByte...)
+
+		// Check for the CRLF sequence
+		if len(data) >= 2 && string(data[len(data)-2:]) == CRLF {
+			return string(data[:len(data)-2]), nil
+		}
+	}
+}
+
+// RequestLine represents the details of the request like http method, target, and http version.
+type RequestLine struct {
+	HTTPMethod    string
+	RequestTarget string
+	HTTPVersion   string
+}
+
+// ReadRequestLine reads the request line from the request connection
+func ReadRequestLine(conn net.Conn) (*RequestLine, error) {
+	rawReqLine, err := ReadUntilCRLF(conn)
+	if err != nil {
+		fmt.Println("Error reading the request line: ", err)
+		return nil, err
 	}
 
-	// Sequence not found yet.
-	// If the buffer is empty, we have reached the end
-	if b.Len() == 0 {
-		return "", io.EOF
+	tokens := strings.Split(rawReqLine, " ")
+	if len(tokens) != 3 {
+		return nil, fmt.Errorf("invalid request line")
 	}
 
-	// Although, sequence doesn't have the CRLF, but in our case, this could be
-	// the request body. Hence, read the remaining data and return it.
-	remainBytes := b.Bytes()
-	return string(remainBytes), io.EOF
+	return &RequestLine{
+		HTTPMethod:    tokens[0],
+		RequestTarget: tokens[1],
+		HTTPVersion:   tokens[2],
+	}, nil
+}
+
+// RequestHeader represents the list of headers from the request
+type RequestHeader map[string]string
+
+// ReadRequestHeader reads the request header from the request connection
+func ReadRequestHeader(conn net.Conn) (RequestHeader, error) {
+	reqHeader := make(map[string]string)
+
+	for {
+		header, err := ReadUntilCRLF(conn)
+		if err != nil {
+			fmt.Println("Error reading the header: ", err)
+			return nil, err
+		}
+
+		if header == "" {
+			break
+		}
+
+		tokens := strings.Split(header, ":")
+		if len(tokens) < 2 {
+			return nil, fmt.Errorf("invalid header")
+		}
+
+		reqHeader[tokens[0]] = strings.Join(tokens[1:], ":")
+	}
+
+	return reqHeader, nil
+}
+
+// SendResponse sends the given resp to the client
+func SendResponse(conn net.Conn, resp []byte) {
+	if _, err := conn.Write(resp); err != nil {
+		fmt.Println("Error returning response: ", err)
+		os.Exit(1)
+	}
+}
+
+// RootHandler handles the root endpoint
+func RootHandler(conn net.Conn) {
+	SendResponse(conn, []byte("HTTP/1.1 200 OK\r\n\r\n"))
+}
+
+// NotFoundHandler handles the endpoint not found
+func NotFoundHandler(conn net.Conn) {
+	SendResponse(conn, []byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+}
+
+// EchoHandler handles the request for /echo/<str> endpoint
+func EchoHandler(conn net.Conn, reqLine *RequestLine) {
+	matches := EchoEndpointRegx.FindStringSubmatch(reqLine.RequestTarget)
+	SendResponse(conn, fmt.Appendf(nil, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(matches[1]), matches[1]))
+}
+
+// UserAgentHandler handles the request for /user-endpoint header
+func UserAgentHandler(conn net.Conn, reqHeader RequestHeader) {
+	val, ok := reqHeader["User-Agent"]
+	if !ok {
+		fmt.Println("No 'User-Agent' header present!")
+		os.Exit(1)
+	}
+
+	SendResponse(conn, fmt.Appendf(nil, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(val), val))
 }
 
 func main() {
+	// Creates an HTTP server
 	l, err := net.Listen("tcp", "0.0.0.0:4221")
 	if err != nil {
 		fmt.Println("Failed to bind to port 4221")
@@ -46,6 +139,7 @@ func main() {
 	}
 	defer l.Close()
 
+	// Wait for a connection
 	conn, err := l.Accept()
 	if err != nil {
 		fmt.Println("Error accepting connection: ", err.Error())
@@ -53,53 +147,27 @@ func main() {
 	}
 	defer conn.Close()
 
-	// Read the data from the connection
-	var (
-		reqData bytes.Buffer
-		reqLine string
-	)
-	buffer := make([]byte, 1)
-	for {
-		n, err := conn.Read(buffer)
-		if err == io.EOF {
-			// Connection closed by peer
-			break
-		} else if err != nil {
-			fmt.Println("Error reading the request: ", err.Error())
-			os.Exit(1)
-		}
-
-		reqData.Write(buffer[:n])
-
-		// Read the 'Request Line'
-		rl, err := ReadUntilCRLF(&reqData)
-		if err == nil && len(rl) > 1 {
-			reqLine = rl
-			break
-		}
-	}
-
-	// Split the request line and get the 'Request Target'
-	reqLineTokens := strings.Split(reqLine, " ")
-	if len(reqLineTokens) != 3 {
-		fmt.Println("Invalid request line")
-		os.Exit(1)
-	}
-
-	reqTarget := reqLineTokens[1]
-	var resp []byte
-	if reqTarget == "/" {
-		resp = []byte("HTTP/1.1 200 OK\r\n\r\n")
-	} else if matches := EchoEndpointRegx.FindStringSubmatch(reqTarget); len(matches) > 0 {
-		resp = fmt.Appendf(nil, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(matches[1]), matches[1])
-	} else {
-		resp = []byte("HTTP/1.1 404 Not Found\r\n\r\n")
-	}
-
-	// Write the response back to client
-	_, err = conn.Write(resp)
+	// Read the request line from the connection
+	reqLine, err := ReadRequestLine(conn)
 	if err != nil {
-		fmt.Println("Error returning response: ", err.Error())
+		fmt.Println("Error reading the request line: ", err)
 		os.Exit(1)
+	}
+
+	// Read the request header
+	reqHeader, err := ReadRequestHeader(conn)
+	if err != nil {
+		fmt.Println("Error reading the connection: ", err)
+		os.Exit(1)
+	}
+
+	if reqLine.RequestTarget == "/" {
+		RootHandler(conn)
+	} else if reqLine.RequestTarget == "/user-agent" {
+		UserAgentHandler(conn, reqHeader)
+	} else if matches := EchoEndpointRegx.FindStringSubmatch(reqLine.RequestTarget); len(matches) > 0 {
+		EchoHandler(conn, reqLine)
+	} else {
+		NotFoundHandler(conn)
 	}
 }
