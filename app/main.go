@@ -149,53 +149,56 @@ func SaveFileHandler(c *ConnHandler, dir, filename string) {
 }
 
 // HandleConnection handles the single connect request
-func HandleConnection(c *ConnHandler, flags map[string]any) {
-	// defer c.conn.Close()
+func HandleConnection(conn net.Conn, flags map[string]any) {
+	defer conn.Close()
 
-	// Select endpoint handler based on the request
-	switch {
-	case c.reqLine.RequestTarget == "/":
-		RootHandler(c)
-
-	case c.reqLine.RequestTarget == "/user-agent":
-		UserAgentHandler(c)
-
-	case EchoEndpointRegx.Match([]byte(c.reqLine.RequestTarget)):
-		EchoHandler(c)
-
-	case FileEndpointRegx.Match([]byte(c.reqLine.RequestTarget)):
-		dir := IsDirExists(flags)
-		if dir == "" {
-			fmt.Println("Directory name not provided!")
-			InternalServerErrHandler(c)
-			return
+	for {
+		// Create the handler for the request
+		c, err := NewConnHandler(conn)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fmt.Println("Error creating the handler: ", err.Error())
+			continue
 		}
 
-		filename := FileEndpointRegx.FindStringSubmatch(c.reqLine.RequestTarget)[1]
-		if filename == "" {
-			fmt.Println("No filename provided")
-			BadReqHandler(c)
-			return
-		}
+		// Select endpoint handler based on the request
+		switch {
+		case c.reqLine.RequestTarget == "/":
+			RootHandler(c)
 
-		if c.reqLine.HTTPMethod == "GET" {
-			GetFileHandler(c, dir, filename)
-		} else {
-			SaveFileHandler(c, dir, filename)
-		}
+		case c.reqLine.RequestTarget == "/user-agent":
+			UserAgentHandler(c)
 
-	default:
-		NotFoundHandler(c)
+		case EchoEndpointRegx.Match([]byte(c.reqLine.RequestTarget)):
+			EchoHandler(c)
+
+		case FileEndpointRegx.Match([]byte(c.reqLine.RequestTarget)):
+			dir := IsDirExists(flags)
+			if dir == "" {
+				fmt.Println("Directory name not provided!")
+				InternalServerErrHandler(c)
+				return
+			}
+
+			filename := FileEndpointRegx.FindStringSubmatch(c.reqLine.RequestTarget)[1]
+			if filename == "" {
+				fmt.Println("No filename provided")
+				BadReqHandler(c)
+				return
+			}
+
+			if c.reqLine.HTTPMethod == "GET" {
+				GetFileHandler(c, dir, filename)
+			} else {
+				SaveFileHandler(c, dir, filename)
+			}
+
+		default:
+			NotFoundHandler(c)
+		}
 	}
-
-	// Handle the new request on the same connection
-	connHandler, err := NewConnHandler(c.conn)
-	if err != nil {
-		fmt.Println("Error creating the handler: ", err.Error())
-		return
-	}
-
-	HandleConnection(connHandler, flags)
 }
 
 func main() {
@@ -224,13 +227,7 @@ func main() {
 			continue
 		}
 
-		connHandler, err := NewConnHandler(conn)
-		if err != nil {
-			fmt.Println("Error creating the handler: ", err.Error())
-			continue
-		}
-
 		// Handle the connection in a separate goroutine
-		go HandleConnection(connHandler, flags)
+		go HandleConnection(conn, flags)
 	}
 }

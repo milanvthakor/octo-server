@@ -38,15 +38,13 @@ func NewConnHandler(conn net.Conn) (*ConnHandler, error) {
 	// Read the request line from the connection
 	reqLine, err := ReadRequestLine(conn)
 	if err != nil {
-		fmt.Println("Error reading the request line: ", err)
 		return nil, err
 	}
 
 	// Read the request header
 	reqHeader, err := ReadRequestHeader(conn)
 	if err != nil {
-		fmt.Println("Error reading the connection: ", err)
-		os.Exit(1)
+		return nil, err
 	}
 
 	return &ConnHandler{
@@ -137,7 +135,6 @@ func ReadUntilCRLF(conn net.Conn) (string, error) {
 func ReadRequestLine(conn net.Conn) (*RequestLine, error) {
 	rawReqLine, err := ReadUntilCRLF(conn)
 	if err != nil {
-		fmt.Println("Error reading the request line: ", err)
 		return nil, err
 	}
 
@@ -163,7 +160,6 @@ func ReadRequestHeader(conn net.Conn) (Headers, error) {
 	for {
 		header, err := ReadUntilCRLF(conn)
 		if err != nil {
-			fmt.Println("Error reading the header: ", err)
 			return nil, err
 		}
 
