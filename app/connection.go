@@ -16,9 +16,15 @@ var (
 
 // ConnHandler binds the connection with methods for parsing the request details and serving multiple endpoints
 type ConnHandler struct {
-	conn      net.Conn
+	conn net.Conn
+
+	// request details
 	reqLine   *RequestLine
-	reqHeader RequestHeader
+	reqHeader Headers
+
+	// response details
+	respStatus  string
+	respHeaders Headers
 }
 
 // RequestLine represents the details of the request like http method, target, and http version.
@@ -44,12 +50,14 @@ func NewConnHandler(conn net.Conn) (*ConnHandler, error) {
 	}
 
 	return &ConnHandler{
-		conn:      conn,
-		reqLine:   reqLine,
-		reqHeader: reqHeader,
+		conn:        conn,
+		reqLine:     reqLine,
+		reqHeader:   reqHeader,
+		respHeaders: make(Headers),
 	}, nil
 }
 
+// ReadRequestBody reads the request body
 func (c *ConnHandler) ReadRequestBody() ([]byte, error) {
 	strContLen, ok := c.reqHeader["Content-Length"]
 	if !ok {
@@ -68,6 +76,36 @@ func (c *ConnHandler) ReadRequestBody() ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// Status set the status for the response
+func (c *ConnHandler) Status(status string) {
+	c.respStatus = status
+}
+
+// Header set the header for the response
+func (c *ConnHandler) Header(key string, val any) {
+	c.respHeaders[key] = fmt.Sprint(val)
+}
+
+// Body sends the given body to the response
+func (c *ConnHandler) Body(blob []byte) {
+	// Create the response status
+	status := "HTTP/1.1 " + strings.TrimSpace(c.respStatus)
+
+	// Convert the map to the slice
+	var header string
+	for k, v := range c.respHeaders {
+		header += k + ": " + v + "\r\n"
+	}
+
+	// Prepare the entire response
+	resp := fmt.Appendf(nil, "%s\r\n%s\r\n%s", status, header, blob)
+
+	if _, err := c.conn.Write(resp); err != nil {
+		fmt.Println("Error returning response: ", err)
+		os.Exit(1)
+	}
 }
 
 // ReadUntilCRLF reads from the connection until it finds a CRLF sequence.
@@ -115,11 +153,11 @@ func ReadRequestLine(conn net.Conn) (*RequestLine, error) {
 	}, nil
 }
 
-// RequestHeader represents the list of headers from the request
-type RequestHeader map[string]string
+// Headers represents the list of headers from the request/response
+type Headers map[string]string
 
 // ReadRequestHeader reads the request header from the request connection
-func ReadRequestHeader(conn net.Conn) (RequestHeader, error) {
+func ReadRequestHeader(conn net.Conn) (Headers, error) {
 	reqHeader := make(map[string]string)
 
 	for {

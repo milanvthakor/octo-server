@@ -15,38 +15,41 @@ var (
 	FileEndpointRegx = regexp.MustCompile(`\/files\/(?P<str>.*)`)
 )
 
-// SendResponse sends the given resp to the client
-func SendResponse(c *ConnHandler, resp []byte) {
-	if _, err := c.conn.Write(resp); err != nil {
-		fmt.Println("Error returning response: ", err)
-		os.Exit(1)
-	}
-}
-
 // RootHandler handles the root endpoint
 func RootHandler(c *ConnHandler) {
-	SendResponse(c, []byte("HTTP/1.1 200 OK\r\n\r\n"))
+	c.Status("200 OK")
+	c.Body(nil)
 }
 
 // NotFoundHandler handles the endpoint not found
 func NotFoundHandler(c *ConnHandler) {
-	SendResponse(c, []byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+	c.Status("404 Not Found")
+	c.Body(nil)
 }
 
 // BadReqHandler sends the 400 - Bad Request response
 func BadReqHandler(c *ConnHandler) {
-	SendResponse(c, []byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
+	c.Status("400 Bad Request")
+	c.Body(nil)
 }
 
 // InternalServerErrHandler sends the 500 - internal server error response
 func InternalServerErrHandler(c *ConnHandler) {
-	SendResponse(c, []byte("HTTP/1.1 500 Internal Server Error\r\n\r\n"))
+	c.Status("500 Internal Server Error")
+	c.Body(nil)
 }
 
 // EchoHandler handles the request for /echo/<str> endpoint
 func EchoHandler(c *ConnHandler) {
 	str := EchoEndpointRegx.FindStringSubmatch(c.reqLine.RequestTarget)[1]
-	SendResponse(c, fmt.Appendf(nil, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(str), str))
+	c.Status("200 OK")
+	c.Header("Content-Type", "text/plain")
+	c.Header("Content-Length", len(str))
+	if acceptEncoding, ok := c.reqHeader["Accept-Encoding"]; ok && acceptEncoding == "gzip" {
+		c.Header("Content-Encoding", "gzip")
+	}
+
+	c.Body([]byte(str))
 }
 
 // UserAgentHandler handles the request for /user-endpoint endpoint
@@ -57,7 +60,10 @@ func UserAgentHandler(c *ConnHandler) {
 		os.Exit(1)
 	}
 
-	SendResponse(c, fmt.Appendf(nil, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(val), val))
+	c.Status("200 OK")
+	c.Header("Content-Type", "text/plain")
+	c.Header("Content-Length", len(val))
+	c.Body([]byte(val))
 }
 
 // GetFileHandler handles the request for the GET /files/{filename} endpoint
@@ -84,7 +90,10 @@ func GetFileHandler(c *ConnHandler, dir, filename string) {
 		return
 	}
 
-	SendResponse(c, fmt.Appendf(nil, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\n\r\n%s", len(content), string(content)))
+	c.Status("200 OK")
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Length", len(content))
+	c.Body(content)
 }
 
 // SaveFileHandler handles the request for the POST /files/{filename} endpoint
@@ -104,7 +113,8 @@ func SaveFileHandler(c *ConnHandler, dir, filename string) {
 		return
 	}
 
-	SendResponse(c, []byte("HTTP/1.1 201 Created\r\n\r\n"))
+	c.Status("201 Created")
+	c.Body(nil)
 }
 
 // HandleConnection handles the single connect request
