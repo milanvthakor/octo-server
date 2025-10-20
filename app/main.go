@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"errors"
 	"flag"
 	"fmt"
@@ -8,6 +10,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"strings"
 )
 
 var (
@@ -42,14 +45,42 @@ func InternalServerErrHandler(c *ConnHandler) {
 // EchoHandler handles the request for /echo/<str> endpoint
 func EchoHandler(c *ConnHandler) {
 	str := EchoEndpointRegx.FindStringSubmatch(c.reqLine.RequestTarget)[1]
-	c.Status("200 OK")
-	c.Header("Content-Type", "text/plain")
-	c.Header("Content-Length", len(str))
-	if acceptEncoding, ok := c.reqHeader["Accept-Encoding"]; ok && acceptEncoding == "gzip" {
-		c.Header("Content-Encoding", "gzip")
+
+	// Check if we can compress the body in gzip
+	var shouldCompress bool
+	if acceptEncoding, ok := c.reqHeader["Accept-Encoding"]; ok {
+		encSchemes := strings.SplitSeq(acceptEncoding, ",")
+		for encScheme := range encSchemes {
+			if strings.TrimSpace(encScheme) == "gzip" {
+				shouldCompress = true
+				break
+			}
+		}
 	}
 
-	c.Body([]byte(str))
+	if shouldCompress {
+		var b bytes.Buffer
+		gzWriter := gzip.NewWriter(&b)
+		if _, err := gzWriter.Write([]byte(str)); err != nil {
+			fmt.Println("Failed to compress the data: ", err.Error())
+			c.Status("500 Internal Server Error")
+			c.Body(nil)
+			return
+		}
+
+		gzWriter.Close()
+
+		c.Status("200 OK")
+		c.Header("Content-Type", "text/plain")
+		c.Header("Content-Encoding", "gzip")
+		c.Header("Content-Length", len(b.Bytes()))
+		c.Body(b.Bytes())
+	} else {
+		c.Status("200 OK")
+		c.Header("Content-Type", "text/plain")
+		c.Header("Content-Length", len(str))
+		c.Body([]byte(str))
+	}
 }
 
 // UserAgentHandler handles the request for /user-endpoint endpoint
