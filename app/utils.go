@@ -2,8 +2,8 @@ package main
 
 import "os"
 
-// IsDirExists checks if the directory exists or not and returns it.
-func IsDirExists(flags map[string]any) string {
+// isDirExists checks if the directory exists or not and returns it.
+func isDirExists(flags map[string]any) string {
 	dir, ok := flags["directory"].(string)
 	if !ok {
 		return ""

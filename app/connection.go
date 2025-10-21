@@ -17,47 +17,54 @@ var (
 // ConnHandler binds the connection with methods for parsing the request details and serving multiple endpoints
 type ConnHandler struct {
 	conn net.Conn
-
-	// request details
-	reqLine   *RequestLine
-	reqHeader Headers
-
-	// response details
-	respStatus  string
-	respHeaders Headers
+	req  *Request
+	resp *Response
 }
 
-// RequestLine represents the details of the request like http method, target, and http version.
-type RequestLine struct {
+// Request represents the details of the request
+type Request struct {
 	HTTPMethod    string
 	RequestTarget string
 	HTTPVersion   string
+
+	Headers map[string]string
+}
+
+// Response represents the details of the response
+type Response struct {
+	StatusCode int
+	Status     string
+
+	Headers map[string]string
 }
 
 func NewConnHandler(conn net.Conn) (*ConnHandler, error) {
-	// Read the request line from the connection
-	reqLine, err := ReadRequestLine(conn)
-	if err != nil {
+	c := &ConnHandler{
+		conn: conn,
+	}
+
+	// Read the request line
+	if req, err := readReqLine(conn); err != nil {
 		return nil, err
+	} else {
+		c.req = req
 	}
 
 	// Read the request header
-	reqHeader, err := ReadRequestHeader(conn)
-	if err != nil {
+	if reqHeaders, err := readReqHeaders(conn); err != nil {
 		return nil, err
+	} else {
+		c.req.Headers = reqHeaders
 	}
 
-	return &ConnHandler{
-		conn:        conn,
-		reqLine:     reqLine,
-		reqHeader:   reqHeader,
-		respHeaders: make(Headers),
-	}, nil
+	c.resp.Headers = make(map[string]string)
+
+	return c, nil
 }
 
 // ReadRequestBody reads the request body
 func (c *ConnHandler) ReadRequestBody() ([]byte, error) {
-	strContLen, ok := c.reqHeader["Content-Length"]
+	strContLen, ok := c.req.Headers["Content-Length"]
 	if !ok {
 		return nil, errors.New("header 'Content-Length' is missing")
 	}
@@ -76,24 +83,37 @@ func (c *ConnHandler) ReadRequestBody() ([]byte, error) {
 	return data, nil
 }
 
-// Status set the status for the response
-func (c *ConnHandler) Status(status string) {
-	c.respStatus = status
+// Status sets the status for the response
+func (c *ConnHandler) Status(statusCode int) {
+	c.resp.StatusCode = statusCode
+
+	switch statusCode {
+	case 200:
+		c.resp.Status = "OK"
+	case 201:
+		c.resp.Status = "Created"
+	case 400:
+		c.resp.Status = "Bad Request"
+	case 404:
+		c.resp.Status = "Not Found"
+	case 500:
+		c.resp.Status = "Internal Server Error"
+	}
 }
 
-// Header set the header for the response
+// Header sets the header for the response
 func (c *ConnHandler) Header(key string, val any) {
-	c.respHeaders[key] = fmt.Sprint(val)
+	c.resp.Headers[key] = fmt.Sprint(val)
 }
 
 // Body sends the given body to the response
 func (c *ConnHandler) Body(blob []byte) {
 	// Create the response status
-	status := "HTTP/1.1 " + strings.TrimSpace(c.respStatus)
+	status := fmt.Sprintf("HTTP/1.1 %d %s", c.resp.StatusCode, c.resp.Status)
 
 	// Convert the map to the slice
 	var header string
-	for k, v := range c.respHeaders {
+	for k, v := range c.resp.Headers {
 		header += k + ": " + v + "\r\n"
 	}
 
@@ -106,9 +126,9 @@ func (c *ConnHandler) Body(blob []byte) {
 	}
 }
 
-// ReadUntilCRLF reads from the connection until it finds a CRLF sequence.
+// readUntilCRLF reads from the connection until it finds a CRLF sequence.
 // It returns the string up to the CRLF sequence.
-func ReadUntilCRLF(conn net.Conn) (string, error) {
+func readUntilCRLF(conn net.Conn) (string, error) {
 	var data []byte
 
 	for {
@@ -131,9 +151,9 @@ func ReadUntilCRLF(conn net.Conn) (string, error) {
 	}
 }
 
-// ReadRequestLine reads the request line from the request connection
-func ReadRequestLine(conn net.Conn) (*RequestLine, error) {
-	rawReqLine, err := ReadUntilCRLF(conn)
+// readReqLine reads the request line from the request connection
+func readReqLine(conn net.Conn) (*Request, error) {
+	rawReqLine, err := readUntilCRLF(conn)
 	if err != nil {
 		return nil, err
 	}
@@ -143,37 +163,34 @@ func ReadRequestLine(conn net.Conn) (*RequestLine, error) {
 		return nil, fmt.Errorf("invalid request line")
 	}
 
-	return &RequestLine{
+	return &Request{
 		HTTPMethod:    tokens[0],
 		RequestTarget: tokens[1],
 		HTTPVersion:   tokens[2],
 	}, nil
 }
 
-// Headers represents the list of headers from the request/response
-type Headers map[string]string
-
-// ReadRequestHeader reads the request header from the request connection
-func ReadRequestHeader(conn net.Conn) (Headers, error) {
-	reqHeader := make(map[string]string)
+// readReqHeaders reads the headers from the request connection
+func readReqHeaders(conn net.Conn) (map[string]string, error) {
+	headers := make(map[string]string)
 
 	for {
-		header, err := ReadUntilCRLF(conn)
+		rawHeader, err := readUntilCRLF(conn)
 		if err != nil {
 			return nil, err
 		}
 
-		if header == "" {
+		if rawHeader == "" {
 			break
 		}
 
-		tokens := strings.Split(header, ":")
+		tokens := strings.Split(rawHeader, ":")
 		if len(tokens) < 2 {
 			return nil, fmt.Errorf("invalid header")
 		}
 
-		reqHeader[strings.TrimSpace(tokens[0])] = strings.TrimSpace(strings.Join(tokens[1:], ":"))
+		headers[strings.TrimSpace(tokens[0])] = strings.TrimSpace(strings.Join(tokens[1:], ":"))
 	}
 
-	return reqHeader, nil
+	return headers, nil
 }

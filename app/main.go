@@ -20,35 +20,35 @@ var (
 
 // RootHandler handles the root endpoint
 func RootHandler(c *ConnHandler) {
-	c.Status("200 OK")
+	c.Status(200)
 	c.Body(nil)
 }
 
 // NotFoundHandler handles the endpoint not found
 func NotFoundHandler(c *ConnHandler) {
-	c.Status("404 Not Found")
+	c.Status(404)
 	c.Body(nil)
 }
 
 // BadReqHandler sends the 400 - Bad Request response
 func BadReqHandler(c *ConnHandler) {
-	c.Status("400 Bad Request")
+	c.Status(400)
 	c.Body(nil)
 }
 
 // InternalServerErrHandler sends the 500 - internal server error response
 func InternalServerErrHandler(c *ConnHandler) {
-	c.Status("500 Internal Server Error")
+	c.Status(500)
 	c.Body(nil)
 }
 
 // EchoHandler handles the request for /echo/<str> endpoint
 func EchoHandler(c *ConnHandler) {
-	str := EchoEndpointRegx.FindStringSubmatch(c.reqLine.RequestTarget)[1]
+	str := EchoEndpointRegx.FindStringSubmatch(c.req.RequestTarget)[1]
 
 	// Check if we can compress the body in gzip
 	var shouldCompress bool
-	if acceptEncoding, ok := c.reqHeader["Accept-Encoding"]; ok {
+	if acceptEncoding, ok := c.req.Headers["Accept-Encoding"]; ok {
 		encSchemes := strings.SplitSeq(acceptEncoding, ",")
 		for encScheme := range encSchemes {
 			if strings.TrimSpace(encScheme) == "gzip" {
@@ -63,20 +63,20 @@ func EchoHandler(c *ConnHandler) {
 		gzWriter := gzip.NewWriter(&b)
 		if _, err := gzWriter.Write([]byte(str)); err != nil {
 			fmt.Println("Failed to compress the data: ", err.Error())
-			c.Status("500 Internal Server Error")
+			c.Status(500)
 			c.Body(nil)
 			return
 		}
 
 		gzWriter.Close()
 
-		c.Status("200 OK")
+		c.Status(200)
 		c.Header("Content-Type", "text/plain")
 		c.Header("Content-Encoding", "gzip")
 		c.Header("Content-Length", len(b.Bytes()))
 		c.Body(b.Bytes())
 	} else {
-		c.Status("200 OK")
+		c.Status(200)
 		c.Header("Content-Type", "text/plain")
 		c.Header("Content-Length", len(str))
 		c.Body([]byte(str))
@@ -85,13 +85,13 @@ func EchoHandler(c *ConnHandler) {
 
 // UserAgentHandler handles the request for /user-endpoint endpoint
 func UserAgentHandler(c *ConnHandler) {
-	val, ok := c.reqHeader["User-Agent"]
+	val, ok := c.req.Headers["User-Agent"]
 	if !ok {
 		fmt.Println("No 'User-Agent' header present!")
 		os.Exit(1)
 	}
 
-	c.Status("200 OK")
+	c.Status(200)
 	c.Header("Content-Type", "text/plain")
 	c.Header("Content-Length", len(val))
 	c.Body([]byte(val))
@@ -121,7 +121,7 @@ func GetFileHandler(c *ConnHandler, dir, filename string) {
 		return
 	}
 
-	c.Status("200 OK")
+	c.Status(200)
 	c.Header("Content-Type", "application/octet-stream")
 	c.Header("Content-Length", len(content))
 	c.Body(content)
@@ -144,7 +144,7 @@ func SaveFileHandler(c *ConnHandler, dir, filename string) {
 		return
 	}
 
-	c.Status("201 Created")
+	c.Status(201)
 	c.Body(nil)
 }
 
@@ -165,38 +165,38 @@ func HandleConnection(conn net.Conn, flags map[string]any) {
 
 		// Add the connection close header in response if present in the request
 		var shouldCloseConn bool
-		if close, ok := c.reqHeader["Connection"]; ok && close == "close" {
+		if close, ok := c.req.Headers["Connection"]; ok && close == "close" {
 			c.Header("Connection", "close")
 			shouldCloseConn = true
 		}
 
 		// Select endpoint handler based on the request
 		switch {
-		case c.reqLine.RequestTarget == "/":
+		case c.req.RequestTarget == "/":
 			RootHandler(c)
 
-		case c.reqLine.RequestTarget == "/user-agent":
+		case c.req.RequestTarget == "/user-agent":
 			UserAgentHandler(c)
 
-		case EchoEndpointRegx.Match([]byte(c.reqLine.RequestTarget)):
+		case EchoEndpointRegx.Match([]byte(c.req.RequestTarget)):
 			EchoHandler(c)
 
-		case FileEndpointRegx.Match([]byte(c.reqLine.RequestTarget)):
-			dir := IsDirExists(flags)
+		case FileEndpointRegx.Match([]byte(c.req.RequestTarget)):
+			dir := isDirExists(flags)
 			if dir == "" {
 				fmt.Println("Directory name not provided!")
 				InternalServerErrHandler(c)
 				return
 			}
 
-			filename := FileEndpointRegx.FindStringSubmatch(c.reqLine.RequestTarget)[1]
+			filename := FileEndpointRegx.FindStringSubmatch(c.req.RequestTarget)[1]
 			if filename == "" {
 				fmt.Println("No filename provided")
 				BadReqHandler(c)
 				return
 			}
 
-			if c.reqLine.HTTPMethod == "GET" {
+			if c.req.HTTPMethod == "GET" {
 				GetFileHandler(c, dir, filename)
 			} else {
 				SaveFileHandler(c, dir, filename)
