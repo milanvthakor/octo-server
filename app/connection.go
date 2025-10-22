@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -8,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
@@ -57,7 +60,9 @@ func NewConnHandler(conn net.Conn) (*ConnHandler, error) {
 		c.req.Headers = reqHeaders
 	}
 
-	c.resp.Headers = make(map[string]string)
+	c.resp = &Response{
+		Headers: make(map[string]string),
+	}
 
 	return c, nil
 }
@@ -129,24 +134,33 @@ func (c *ConnHandler) Body(blob []byte) {
 // readUntilCRLF reads from the connection until it finds a CRLF sequence.
 // It returns the string up to the CRLF sequence.
 func readUntilCRLF(conn net.Conn) (string, error) {
-	var data []byte
+	conn.SetReadDeadline(time.Now().Add(time.Second))
+	defer conn.SetReadDeadline(time.Time{}) // Reset deadline
+
+	reader := bufio.NewReader(conn)
+	var buf bytes.Buffer
 
 	for {
-		aByte := make([]byte, 1)
-		_, err := conn.Read(aByte)
-		if err == io.EOF {
-			// Connection closed by peer
-			return string(data), io.EOF
-		} else if err != nil {
-			fmt.Println("Error reading the request data: ", err)
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
+				// Connection closed by peer
+				return buf.String(), io.EOF
+			}
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				return buf.String(), nil
+			}
+
 			return "", err
 		}
 
-		data = append(data, aByte...)
+		buf.Write(line)
 
 		// Check for the CRLF sequence
-		if len(data) >= 2 && string(data[len(data)-2:]) == CRLF {
-			return string(data[:len(data)-2]), nil
+		result := buf.String()
+
+		if len(result) >= 2 && result[len(result)-2:] == CRLF {
+			return result[:len(result)-2], nil // Strip CRLF
 		}
 	}
 }

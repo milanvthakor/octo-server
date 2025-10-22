@@ -160,7 +160,7 @@ func HandleConnection(conn net.Conn, flags map[string]any) {
 		}
 		if err != nil {
 			fmt.Println("Error creating the handler: ", err.Error())
-			continue
+			return
 		}
 
 		// Add the connection close header in response if present in the request
