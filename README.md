@@ -1,4 +1,4 @@
-# HTTP Server
+# Octo Server
 
 A lightweight HTTP/1.1 server implementation in Go, built from scratch. This server handles multiple concurrent connections and supports various HTTP endpoints including file operations, content compression, and standard HTTP methods.
 
